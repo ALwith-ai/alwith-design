@@ -1,0 +1,52 @@
+#!/bin/bash
+# design-tool — unified entry point for Claude Design Expert tools
+# Usage: design-tool <command> [args...]
+#
+# Commands:
+#   show-html <path>              Open HTML in browser + browse preview
+#   done <path>                   Show HTML + check for console errors
+#   screenshot <path> [output]    Take screenshot of current page
+#   get-webview-logs              Get console logs/errors
+#   eval-js <expression>          Execute JS in the browser
+#   save-screenshot <json>        Multi-step screenshot capture
+#   multi-screenshot <json>       Batch screenshots with JS between each
+#   copy-starter-component <kind> Copy a starter component template
+#   image-metadata <path>         Get image dimensions and format info
+#   register-assets <json>        Register files in asset manifest
+#   unregister-assets <json>      Remove files from asset manifest
+#   run-script <file>             Execute a bun script with helper API
+#   gen-pptx <json>               Generate PPTX from HTML slides
+#   super-inline-html <in> <out>  Bundle HTML + assets into single file
+#   open-for-print <path>         Open HTML for Cmd+P printing
+#   fork-verifier [task]          Spawn verification subagent
+#   server-start [dir]            Start local dev server
+#   server-stop                   Stop local dev server
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CMD="${1:-help}"
+shift 2>/dev/null || true
+
+case "$CMD" in
+  help|--help|-h)
+    sed -n '2,/^$/p' "$0" | sed 's/^# //'
+    ;;
+  server-start)
+    source "$SCRIPT_DIR/../lib/server.sh"
+    server_start "${1:-.}"
+    ;;
+  server-stop)
+    source "$SCRIPT_DIR/../lib/server.sh"
+    server_stop
+    ;;
+  *)
+    TOOL="$SCRIPT_DIR/$CMD"
+    if [ -x "$TOOL" ]; then
+      exec "$TOOL" "$@"
+    else
+      echo "ERROR: Unknown command '$CMD'. Run 'design-tool help' for usage." >&2
+      exit 1
+    fi
+    ;;
+esac

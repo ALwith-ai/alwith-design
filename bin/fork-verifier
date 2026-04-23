@@ -1,0 +1,76 @@
+#!/bin/bash
+# fork-verifier — Spawn a verification subagent to check design output
+# Usage: fork-verifier <html_file> [--task <specific_check>]
+#
+# This script is designed to be called from the SKILL.md prompt as
+# an instruction to use ALwith's Agent tool. It outputs the verification
+# prompt that should be passed to the Agent tool.
+#
+# Without --task: full sweep (screenshot, console check, layout verification)
+# With --task: focused check on specific aspect
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+HTML_FILE="${1:?Usage: fork-verifier <html_file> [--task <check>]}"
+TASK=""
+
+if [ "${2:-}" = "--task" ]; then
+  TASK="${3:-}"
+fi
+
+# Resolve absolute path
+if [[ "$HTML_FILE" != /* ]]; then
+  HTML_FILE="$(pwd)/$HTML_FILE"
+fi
+
+B_PATH=""
+_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B_PATH="$_ROOT/.claude/skills/gstack/browse/dist/browse"
+[ -z "$B_PATH" ] && B_PATH="$HOME/.claude/skills/gstack/browse/dist/browse"
+
+if [ -n "$TASK" ]; then
+  # Directed check
+  cat << EOF
+VERIFICATION PROMPT (pass to ALwith Agent tool):
+
+You are a design verifier. Check the HTML file: $HTML_FILE
+
+Specific task: $TASK
+
+Steps:
+1. Use Bash to run: $B_PATH goto "file://$HTML_FILE"
+2. Run: $B_PATH screenshot /tmp/verify-check.png
+3. Use Read to view /tmp/verify-check.png
+4. Run: $B_PATH console --errors
+5. Perform the specific check: $TASK
+6. Report: PASS or FAIL with details
+
+Always report back regardless of outcome.
+EOF
+else
+  # Full sweep
+  cat << EOF
+VERIFICATION PROMPT (pass to ALwith Agent tool):
+
+You are a design verifier. Thoroughly check: $HTML_FILE
+
+Steps:
+1. Use Bash to run: $B_PATH goto "file://$HTML_FILE"
+2. Wait 2 seconds for page to load
+3. Run: $B_PATH console --errors
+   - If errors found: report them
+4. Run: $B_PATH screenshot /tmp/verify-full.png
+5. Use Read to view /tmp/verify-full.png
+6. Check:
+   - Page renders without blank areas
+   - No broken layout or overflow
+   - Text is readable (no clipping)
+   - Colors and contrast look correct
+   - Interactive elements are visible
+7. Run: $B_PATH responsive /tmp/verify-responsive
+8. Check responsive screenshots for layout issues
+
+Report: PASS (silent) or FAIL with specific issues.
+EOF
+fi

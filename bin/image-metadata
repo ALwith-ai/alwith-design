@@ -1,0 +1,98 @@
+#!/bin/bash
+# image-metadata — Get image dimensions, format, and transparency info
+# Usage: image-metadata <path>
+#
+# Returns: width, height, format, has_transparency, is_animated
+# Supports: PNG, JPEG, GIF, WebP, BMP, SVG
+
+set -euo pipefail
+
+FILE="${1:?Usage: image-metadata <path>}"
+
+if [ ! -f "$FILE" ]; then
+  echo "ERROR: File not found: $FILE" >&2
+  exit 1
+fi
+
+# Try sips (macOS built-in) first, then python3 PIL
+if command -v sips >/dev/null 2>&1; then
+  # Get format
+  FORMAT=$(sips -g format "$FILE" 2>/dev/null | tail -1 | awk '{print $2}')
+  WIDTH=$(sips -g pixelWidth "$FILE" 2>/dev/null | tail -1 | awk '{print $2}')
+  HEIGHT=$(sips -g pixelHeight "$FILE" 2>/dev/null | tail -1 | awk '{print $2}')
+  HAS_ALPHA=$(sips -g hasAlpha "$FILE" 2>/dev/null | tail -1 | awk '{print $2}')
+
+  echo "{"
+  echo "  \"path\": \"$FILE\","
+  echo "  \"width\": ${WIDTH:-0},"
+  echo "  \"height\": ${HEIGHT:-0},"
+  echo "  \"format\": \"${FORMAT:-unknown}\","
+  echo "  \"has_transparency\": ${HAS_ALPHA:-false},"
+  echo "  \"is_animated\": false"
+  echo "}"
+elif command -v python3 >/dev/null 2>&1; then
+  python3 -c "
+import json, os, struct
+
+path = '$FILE'
+ext = os.path.splitext(path)[1].lower()
+
+width, height = 0, 0
+fmt = ext.lstrip('.')
+has_alpha = False
+animated = False
+
+with open(path, 'rb') as f:
+    header = f.read(32)
+
+    if header[:8] == b'\\x89PNG\\r\\n\\x1a\\n':
+        fmt = 'png'
+        width = struct.unpack('>I', header[16:20])[0]
+        height = struct.unpack('>I', header[20:24])[0]
+        # Check for alpha channel
+        color_type = header[25]
+        has_alpha = color_type in (4, 6)
+    elif header[:2] in (b'\\xff\\xd8',):
+        fmt = 'jpeg'
+        # Basic JPEG dimension reading
+        f.seek(0)
+        data = f.read()
+        i = 2
+        while i < len(data) - 1:
+            if data[i] == 0xFF:
+                marker = data[i+1]
+                if marker in (0xC0, 0xC1, 0xC2):
+                    height = struct.unpack('>H', data[i+5:i+7])[0]
+                    width = struct.unpack('>H', data[i+7:i+9])[0]
+                    break
+                elif marker == 0xD9:
+                    break
+                else:
+                    length = struct.unpack('>H', data[i+2:i+4])[0]
+                    i += 2 + length
+            else:
+                i += 1
+    elif header[:6] in (b'GIF87a', b'GIF89a'):
+        fmt = 'gif'
+        width = struct.unpack('<H', header[6:8])[0]
+        height = struct.unpack('<H', header[8:10])[0]
+        has_alpha = True
+        # Check if animated (multiple image blocks)
+        f.seek(0)
+        data = f.read()
+        animated = data.count(b'\\x00\\x2c') > 1
+
+result = {
+    'path': path,
+    'width': width,
+    'height': height,
+    'format': fmt,
+    'has_transparency': has_alpha,
+    'is_animated': animated,
+}
+print(json.dumps(result, indent=2))
+"
+else
+  echo "ERROR: No image tools available (need sips or python3)" >&2
+  exit 1
+fi

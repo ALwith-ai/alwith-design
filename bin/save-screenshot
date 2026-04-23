@@ -1,0 +1,89 @@
+#!/bin/bash
+# save-screenshot — Multi-step screenshot capture
+# Usage: save-screenshot --path <html_file> --output <save_path> [--steps '<json>'] [--hq]
+#
+# Takes one or more screenshots, optionally running JS before each capture.
+#
+# Steps JSON format: [{"code": "goToSlide(0)", "delay": 200}, {"delay": 500}]
+# If no steps provided, takes a single screenshot.
+#
+# Multiple captures get numerical prefixes (01-output.png, 02-output.png)
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../lib/browse-helper.sh"
+
+HTML_PATH=""
+OUTPUT=""
+STEPS="[]"
+HQ=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --path)   HTML_PATH="$2"; shift 2 ;;
+    --output) OUTPUT="$2"; shift 2 ;;
+    --steps)  STEPS="$2"; shift 2 ;;
+    --hq)     HQ=true; shift ;;
+    *)        echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+OUTPUT="${OUTPUT:-/tmp/design-screenshot-$(date +%s).png}"
+
+# Parse steps with python3
+STEP_COUNT=$(python3 -c "import json; print(len(json.loads('$STEPS')))" 2>/dev/null || echo "0")
+
+if [ "$STEP_COUNT" -le 1 ]; then
+  # Single screenshot
+  CODE=$(python3 -c "
+import json
+steps = json.loads('$STEPS')
+if steps and 'code' in steps[0]:
+    print(steps[0]['code'])
+else:
+    print('')
+" 2>/dev/null || echo "")
+
+  DELAY=$(python3 -c "
+import json
+steps = json.loads('$STEPS')
+if steps and 'delay' in steps[0]:
+    print(steps[0]['delay'])
+else:
+    print('200')
+" 2>/dev/null || echo "200")
+
+  if [ -n "$CODE" ]; then
+    $B js "$CODE" 2>/dev/null
+  fi
+
+  sleep "$(echo "scale=2; $DELAY / 1000" | bc)"
+  $B screenshot "$OUTPUT" 2>/dev/null
+  echo "Screenshot saved: $OUTPUT"
+else
+  # Multiple screenshots
+  DIR=$(dirname "$OUTPUT")
+  BASE=$(basename "$OUTPUT" .png)
+  mkdir -p "$DIR"
+
+  python3 -c "
+import json, subprocess, time, os
+
+steps = json.loads('$STEPS')
+B = '$B'
+
+for i, step in enumerate(steps):
+    code = step.get('code', '')
+    delay = step.get('delay', 200)
+
+    if code:
+        subprocess.run([B, 'js', code], capture_output=True)
+
+    time.sleep(delay / 1000.0)
+
+    idx = str(i + 1).zfill(2)
+    out = os.path.join('$DIR', f'{idx}-{BASE}.png' if len(steps) > 1 else f'{BASE}.png')
+    subprocess.run([B, 'screenshot', out], capture_output=True)
+    print(f'Screenshot {idx}: {out}')
+"
+fi

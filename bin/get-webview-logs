@@ -1,0 +1,21 @@
+#!/bin/bash
+# get-webview-logs — Get console logs from the browser
+# Usage: get-webview-logs [--errors] [--clear]
+#
+# Options:
+#   --errors    Only show errors and warnings
+#   --clear     Clear console after reading
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../lib/browse-helper.sh"
+
+FLAGS=""
+for arg in "$@"; do
+  case "$arg" in
+    --errors) FLAGS="--errors" ;;
+    --clear)  FLAGS="--clear" ;;
+  esac
+done
+
+$B console $FLAGS 2>/dev/null

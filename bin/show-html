@@ -1,0 +1,51 @@
+#!/bin/bash
+# show-html — Open an HTML file in the browser and gstack browse
+# Usage: show-html <path> [--no-browser]
+#
+# Opens the file via a local dev server in both:
+# 1. The user's default browser (unless --no-browser)
+# 2. gstack browse for headless inspection
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+FILE_PATH="${1:?Usage: show-html <path> [--no-browser]}"
+NO_BROWSER=false
+[ "${2:-}" = "--no-browser" ] && NO_BROWSER=true
+
+# Resolve to absolute path
+if [[ "$FILE_PATH" != /* ]]; then
+  FILE_PATH="$(pwd)/$FILE_PATH"
+fi
+
+if [ ! -f "$FILE_PATH" ]; then
+  echo "ERROR: File not found: $FILE_PATH" >&2
+  exit 1
+fi
+
+# Determine project root (prefer git root, fallback to file's directory)
+PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
+[ -z "$PROJECT_ROOT" ] && PROJECT_ROOT=$(dirname "$FILE_PATH")
+
+# Get relative path from project root
+REL_PATH="${FILE_PATH#$PROJECT_ROOT/}"
+
+# Start server if needed
+source "$SCRIPT_DIR/../lib/server.sh"
+if ! server_is_running; then
+  server_start "$PROJECT_ROOT"
+fi
+
+URL=$(server_url "$REL_PATH")
+
+# Load in browse
+source "$SCRIPT_DIR/../lib/browse-helper.sh"
+$B goto "$URL" 2>/dev/null
+
+# Open in user's browser
+if [ "$NO_BROWSER" = false ]; then
+  open "$URL" 2>/dev/null || xdg-open "$URL" 2>/dev/null || true
+fi
+
+echo "SHOWING: $REL_PATH"
+echo "URL: $URL"

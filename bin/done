@@ -1,0 +1,33 @@
+#!/bin/bash
+# done — Show HTML to user and check for console errors
+# Usage: done <path>
+#
+# 1. Opens the HTML file in the browser
+# 2. Checks for console errors via gstack browse
+# 3. Reports errors or "clean"
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+FILE_PATH="${1:?Usage: done <path>}"
+
+# Show the file
+"$SCRIPT_DIR/show-html" "$FILE_PATH"
+
+# Wait for page to settle
+sleep 2
+
+# Check console errors
+source "$SCRIPT_DIR/../lib/browse-helper.sh"
+ERRORS=$($B console --errors 2>/dev/null || echo "")
+
+if [ -z "$ERRORS" ] || [ "$ERRORS" = "No console messages" ] || [ "$ERRORS" = "No matching messages" ] || [ "$ERRORS" = "(no console errors)" ]; then
+  echo ""
+  echo "STATUS: clean"
+  echo "No console errors detected."
+else
+  echo ""
+  echo "STATUS: errors"
+  echo "Console errors found:"
+  echo "$ERRORS"
+fi

@@ -1,0 +1,49 @@
+#!/bin/bash
+# copy-starter-component — Copy a starter component template into the project
+# Usage: copy-starter-component <kind> [directory]
+#
+# Available kinds:
+#   deck_stage.js       — Slide deck web component
+#   design_canvas.jsx   — Grid layout for design options
+#   ios_frame.jsx       — iPhone device bezel
+#   android_frame.jsx   — Android device bezel
+#   macos_window.jsx    — macOS window chrome
+#   browser_window.jsx  — Browser window chrome
+#   animations.jsx      — Timeline-based animation engine
+#
+# The file is copied to the current directory (or specified directory)
+# and its contents are printed to stdout.
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+STARTERS_DIR="$SCRIPT_DIR/../starters"
+
+KIND="${1:?Usage: copy-starter-component <kind> [directory]}"
+DEST_DIR="${2:-.}"
+
+VALID_KINDS="deck_stage.js design_canvas.jsx ios_frame.jsx android_frame.jsx macos_window.jsx browser_window.jsx animations.jsx"
+
+# Validate kind
+if ! echo "$VALID_KINDS" | grep -qw "$KIND"; then
+  echo "ERROR: Unknown kind '$KIND'" >&2
+  echo "Available kinds: $VALID_KINDS" >&2
+  exit 1
+fi
+
+SRC="$STARTERS_DIR/$KIND"
+if [ ! -f "$SRC" ]; then
+  echo "ERROR: Starter component not found: $SRC" >&2
+  exit 1
+fi
+
+# Create destination directory if needed
+mkdir -p "$DEST_DIR"
+
+DEST="$DEST_DIR/$KIND"
+cp "$SRC" "$DEST"
+
+echo "Copied: $KIND → $DEST"
+echo "---"
+echo "Content ($KIND):"
+echo ""
+cat "$DEST"

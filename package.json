@@ -1,0 +1,9 @@
+{
+  "name": "claude-design-expert",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Claude Design Expert tools for ALwith",
+  "dependencies": {
+    "pptxgenjs": "^4.0.1"
+  }
+}

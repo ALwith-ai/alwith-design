@@ -1,0 +1,59 @@
+#!/bin/bash
+# register-assets — Register files in the asset review manifest
+# Usage: register-assets --path <file> --asset <name> [--group <group>] [--subtitle <text>] [--status <status>]
+#        register-assets --json '<json_array>'
+#        register-assets --list
+#        register-assets --unregister --path <file> [--asset <name>]
+#
+# Groups: Type, Colors, Spacing, Components, Brand
+# Status: needs-review, approved, changes-requested
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../lib/manifest.sh"
+
+ACTION="register"
+PATH_ARG=""
+ASSET=""
+GROUP=""
+SUBTITLE=""
+STATUS="needs-review"
+JSON_INPUT=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --path)       PATH_ARG="$2"; shift 2 ;;
+    --asset)      ASSET="$2"; shift 2 ;;
+    --group)      GROUP="$2"; shift 2 ;;
+    --subtitle)   SUBTITLE="$2"; shift 2 ;;
+    --status)     STATUS="$2"; shift 2 ;;
+    --json)       JSON_INPUT="$2"; shift 2 ;;
+    --list)       ACTION="list"; shift ;;
+    --unregister) ACTION="unregister"; shift ;;
+    *)            echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+case "$ACTION" in
+  register)
+    if [ -n "$JSON_INPUT" ]; then
+      # Batch register from JSON
+      python3 -c "
+import json
+items = json.loads('$JSON_INPUT')
+for item in items:
+    print(f\"register {item['path']} {item['asset']} {item.get('group','')} {item.get('subtitle','')} {item.get('status','needs-review')}\")
+" | while read -r _ p a g s st; do
+        manifest_register "$p" "$a" "$g" "$s" "$st"
+      done
+    else
+      manifest_register "$PATH_ARG" "$ASSET" "$GROUP" "$SUBTITLE" "$STATUS"
+    fi
+    ;;
+  unregister)
+    manifest_unregister "$PATH_ARG" "$ASSET"
+    ;;
+  list)
+    manifest_list
+    ;;
+esac

@@ -1,0 +1,187 @@
+#!/bin/bash
+# gen-pptx — Generate PowerPoint from HTML slides
+# Usage: gen-pptx --input <html_file> --output <pptx_file> [--mode screenshots|editable]
+#        gen-pptx --slides '<json>' --output <pptx_file>
+#
+# Modes:
+#   screenshots (default) — Full-bleed PNG per slide (pixel-perfect)
+#   editable             — Attempts native text/shapes (limited)
+#
+# Slides JSON: [{"selector":"section:nth-child(1)","showJs":"goToSlide(0)","delay":600}]
+#
+# Dependencies: pptxgenjs (auto-installed if missing)
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SKILL_DIR="$SCRIPT_DIR/.."
+
+INPUT=""
+OUTPUT="deck.pptx"
+MODE="screenshots"
+SLIDES_JSON=""
+WIDTH=1920
+HEIGHT=1080
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --input)   INPUT="$2"; shift 2 ;;
+    --output)  OUTPUT="$2"; shift 2 ;;
+    --mode)    MODE="$2"; shift 2 ;;
+    --slides)  SLIDES_JSON="$2"; shift 2 ;;
+    --width)   WIDTH="$2"; shift 2 ;;
+    --height)  HEIGHT="$2"; shift 2 ;;
+    *)         echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+# Check/install pptxgenjs
+if ! bun pm ls 2>/dev/null | grep -q pptxgenjs; then
+  echo "Installing pptxgenjs..."
+  cd "$SKILL_DIR" && bun add pptxgenjs 2>/dev/null
+fi
+
+# Source browse helper
+source "$SCRIPT_DIR/../lib/browse-helper.sh"
+
+# Create generator script
+GEN_SCRIPT=$(mktemp /tmp/gen-pptx-XXXXX.ts)
+
+cat > "$GEN_SCRIPT" << 'GENSCRIPT'
+import PptxGenJS from "pptxgenjs";
+import fs from "fs";
+import { execSync } from "child_process";
+
+const args = process.argv.slice(2);
+const B = args[0];
+const output = args[1];
+const width = parseInt(args[2]);
+const height = parseInt(args[3]);
+const slidesJson = args[4] || "[]";
+
+const slides: Array<{selector?: string, showJs?: string, delay?: number}> = JSON.parse(slidesJson);
+
+async function main() {
+  const pptx = new PptxGenJS();
+
+  // Set slide dimensions (inches, 96 DPI)
+  pptx.defineLayout({
+    name: "CUSTOM",
+    width: width / 96,
+    height: height / 96,
+  });
+  pptx.layout = "CUSTOM";
+
+  const tmpDir = `/tmp/pptx-slides-${Date.now()}`;
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  if (slides.length === 0) {
+    // Auto-detect: try goToSlide
+    let slideCount = 1;
+    try {
+      const countStr = execSync(`${B} js "document.querySelectorAll('deck-stage > section, .slide, [data-slide]').length"`, { encoding: 'utf-8' }).trim();
+      slideCount = parseInt(countStr) || 1;
+    } catch {}
+
+    for (let i = 0; i < slideCount; i++) {
+      slides.push({ showJs: `goToSlide(${i})`, delay: 600 });
+    }
+  }
+
+  // Set viewport to match slide dimensions
+  try {
+    execSync(`${B} viewport ${width}x${height}`, { stdio: 'pipe' });
+  } catch {}
+
+  // Small delay for viewport to settle
+  await new Promise(r => setTimeout(r, 500));
+
+  console.log(`Generating ${slides.length} slides...`);
+
+  for (let i = 0; i < slides.length; i++) {
+    const s = slides[i];
+    const idx = String(i + 1).padStart(2, '0');
+    const imgPath = `${tmpDir}/slide-${idx}.png`;
+
+    // Run JS to show slide
+    if (s.showJs) {
+      try {
+        execSync(`${B} js "${s.showJs.replace(/"/g, '\\"')}"`, { stdio: 'pipe' });
+      } catch {}
+    }
+
+    // Wait
+    const delay = s.delay || 600;
+    await new Promise(r => setTimeout(r, delay));
+
+    // Take screenshot
+    try {
+      if (s.selector) {
+        execSync(`${B} screenshot "${s.selector}" "${imgPath}"`, { stdio: 'pipe' });
+      } else {
+        execSync(`${B} screenshot "${imgPath}"`, { stdio: 'pipe' });
+      }
+    } catch (e) {
+      console.error(`Failed to capture slide ${i + 1}`);
+      continue;
+    }
+
+    if (!fs.existsSync(imgPath)) {
+      console.error(`Slide ${i + 1}: screenshot file not created`);
+      continue;
+    }
+
+    // Add slide to PPTX — read as base64 data URI
+    const imgBuffer = fs.readFileSync(imgPath);
+    const base64 = imgBuffer.toString("base64");
+    const dataUri = `image/png;base64,${base64}`;
+
+    const slide = pptx.addSlide();
+    slide.addImage({
+      data: dataUri,
+      x: 0,
+      y: 0,
+      w: "100%",
+      h: "100%",
+    });
+
+    console.log(`  Slide ${idx}: captured`);
+  }
+
+  // Write PPTX
+  const data = await pptx.write({ outputType: "nodebuffer" });
+  fs.writeFileSync(output, data as Buffer);
+  console.log(`\nPPTX saved: ${output} (${slides.length} slides)`);
+
+  // Cleanup
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+}
+
+main().catch(console.error);
+GENSCRIPT
+
+# Auto-detect slides if no JSON provided
+if [ -z "$SLIDES_JSON" ]; then
+  SLIDES_JSON="[]"
+fi
+
+# Ensure browse is on the right page before generating
+if [ -n "$INPUT" ]; then
+  # Start server if needed
+  source "$SCRIPT_DIR/../lib/server.sh"
+  INPUT_ABS="$INPUT"
+  [[ "$INPUT_ABS" != /* ]] && INPUT_ABS="$(pwd)/$INPUT_ABS"
+  INPUT_DIR=$(dirname "$INPUT_ABS")
+  INPUT_FILE=$(basename "$INPUT_ABS")
+
+  if ! server_is_running; then
+    server_start "$INPUT_DIR"
+  fi
+  $B goto "$(server_url "$INPUT_FILE")" 2>/dev/null
+  sleep 2
+fi
+
+cd "$SKILL_DIR" && bun run "$GEN_SCRIPT" "$B" "$OUTPUT" "$WIDTH" "$HEIGHT" "$SLIDES_JSON"
+EXIT_CODE=$?
+
+rm -f "$GEN_SCRIPT"
+exit $EXIT_CODE

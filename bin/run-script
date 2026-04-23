@@ -1,0 +1,104 @@
+#!/bin/bash
+# run-script — Execute a JavaScript/TypeScript script with helper API
+# Usage: run-script <file>
+#        run-script --inline '<code>'
+#
+# The script runs in bun with these helpers available:
+#   readFile(path)        — Read file as UTF-8 string
+#   readFileBinary(path)  — Read file as Buffer
+#   readImage(path)       — Load image metadata (width, height)
+#   saveFile(path, data)  — Save string or Buffer to file
+#   ls(path)              — List directory contents
+#   log(...args)          — Print to stdout
+#   createCanvas(w, h)    — Create a canvas (requires @napi-rs/canvas)
+
+set -euo pipefail
+
+FILE=""
+INLINE=""
+
+if [ "${1:-}" = "--inline" ]; then
+  INLINE="${2:?Usage: run-script --inline '<code>'}"
+else
+  FILE="${1:?Usage: run-script <file|--inline code>}"
+fi
+
+# Create a wrapper script with helpers
+WRAPPER=$(mktemp /tmp/design-script-XXXXX.ts)
+
+cat > "$WRAPPER" << 'HELPERS'
+import fs from "fs";
+import path from "path";
+
+// Helper API
+function readFile(p: string): string {
+  return fs.readFileSync(p, "utf-8");
+}
+
+function readFileBinary(p: string): Buffer {
+  return fs.readFileSync(p);
+}
+
+function readImage(p: string): { width: number; height: number; format: string } {
+  const buf = fs.readFileSync(p);
+  const ext = path.extname(p).toLowerCase();
+
+  if (buf[0] === 0x89 && buf[1] === 0x50) { // PNG
+    const width = buf.readUInt32BE(16);
+    const height = buf.readUInt32BE(20);
+    return { width, height, format: 'png' };
+  }
+  if (buf[0] === 0xFF && buf[1] === 0xD8) { // JPEG
+    let i = 2;
+    while (i < buf.length - 1) {
+      if (buf[i] === 0xFF) {
+        const marker = buf[i + 1];
+        if (marker === 0xC0 || marker === 0xC1 || marker === 0xC2) {
+          const height = buf.readUInt16BE(i + 5);
+          const width = buf.readUInt16BE(i + 7);
+          return { width, height, format: 'jpeg' };
+        } else if (marker === 0xD9) break;
+        else {
+          const len = buf.readUInt16BE(i + 2);
+          i += 2 + len;
+        }
+      } else i++;
+    }
+  }
+  return { width: 0, height: 0, format: ext.slice(1) };
+}
+
+async function saveFile(p: string, data: string | Buffer): Promise<void> {
+  const dir = path.dirname(p);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(p, data);
+}
+
+async function ls(p: string = "."): Promise<string[]> {
+  return fs.readdirSync(p);
+}
+
+function log(...args: any[]): void {
+  console.log(...args);
+}
+
+// Make helpers available globally
+Object.assign(globalThis, {
+  readFile, readFileBinary, readImage, saveFile, ls, log
+});
+
+// --- User script below ---
+HELPERS
+
+if [ -n "$INLINE" ]; then
+  echo "$INLINE" >> "$WRAPPER"
+else
+  cat "$FILE" >> "$WRAPPER"
+fi
+
+# Execute
+bun run "$WRAPPER"
+EXIT_CODE=$?
+
+rm -f "$WRAPPER"
+exit $EXIT_CODE

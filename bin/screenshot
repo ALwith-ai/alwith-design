@@ -1,0 +1,67 @@
+#!/bin/bash
+# screenshot — Take a screenshot of the current browser page
+# Usage: screenshot [options] [output_path]
+#
+# Options:
+#   --viewport WxH     Set viewport before capture (e.g. 1920x1080)
+#   --selector SEL     Capture only this CSS selector
+#   --clip x,y,w,h     Clip to region
+#   --hq               High quality PNG (default is PNG anyway)
+#   --goto URL         Navigate to URL first
+#
+# If no output_path given, saves to /tmp/design-screenshot-<timestamp>.png
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../lib/browse-helper.sh"
+
+OUTPUT=""
+VIEWPORT=""
+SELECTOR=""
+CLIP=""
+GOTO_URL=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --viewport) VIEWPORT="$2"; shift 2 ;;
+    --selector) SELECTOR="$2"; shift 2 ;;
+    --clip)     CLIP="$2"; shift 2 ;;
+    --hq)       shift ;;  # PNG is always HQ
+    --goto)     GOTO_URL="$2"; shift 2 ;;
+    -*)         echo "Unknown option: $1" >&2; exit 1 ;;
+    *)          OUTPUT="$1"; shift ;;
+  esac
+done
+
+# Default output path
+if [ -z "$OUTPUT" ]; then
+  OUTPUT="/tmp/design-screenshot-$(date +%s).png"
+fi
+
+# Navigate if requested
+if [ -n "$GOTO_URL" ]; then
+  $B goto "$GOTO_URL" 2>/dev/null
+  sleep 1
+fi
+
+# Set viewport if requested
+if [ -n "$VIEWPORT" ]; then
+  $B viewport "$VIEWPORT" 2>/dev/null
+fi
+
+# Take screenshot
+if [ -n "$SELECTOR" ]; then
+  $B screenshot "$SELECTOR" "$OUTPUT" 2>/dev/null
+elif [ -n "$CLIP" ]; then
+  $B screenshot --clip "$CLIP" "$OUTPUT" 2>/dev/null
+else
+  $B screenshot "$OUTPUT" 2>/dev/null
+fi
+
+if [ -f "$OUTPUT" ]; then
+  echo "Screenshot saved: $OUTPUT"
+  echo "Size: $(wc -c < "$OUTPUT" | tr -d ' ') bytes"
+else
+  echo "ERROR: Screenshot failed" >&2
+  exit 1
+fi

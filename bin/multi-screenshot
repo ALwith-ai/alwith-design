@@ -1,0 +1,61 @@
+#!/bin/bash
+# multi-screenshot — Batch screenshots with JS between each capture
+# Usage: multi-screenshot --path <html_file> --output-dir <dir> [--steps '<json>']
+#
+# Steps JSON format: [{"code": "goToSlide(0)", "delay": 200}, ...]
+# Max 12 steps per call.
+#
+# Each step runs JS, waits, then captures. Output: <dir>/01.png, 02.png, ...
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../lib/browse-helper.sh"
+
+HTML_PATH=""
+OUTPUT_DIR="/tmp/multi-screenshots-$(date +%s)"
+STEPS="[]"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --path)       HTML_PATH="$2"; shift 2 ;;
+    --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
+    --steps)      STEPS="$2"; shift 2 ;;
+    *)            echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+mkdir -p "$OUTPUT_DIR"
+
+python3 -c "
+import json, subprocess, time, os, sys
+
+steps = json.loads('''$STEPS''')
+if len(steps) > 12:
+    print('ERROR: Max 12 steps per call', file=sys.stderr)
+    sys.exit(1)
+
+B = '$B'
+out_dir = '$OUTPUT_DIR'
+
+for i, step in enumerate(steps):
+    code = step.get('code', '')
+    delay = step.get('delay', 200)
+
+    if code:
+        subprocess.run([B, 'js', code], capture_output=True)
+
+    time.sleep(delay / 1000.0)
+
+    idx = str(i + 1).zfill(2)
+    path = os.path.join(out_dir, f'{idx}.png')
+    result = subprocess.run([B, 'screenshot', path], capture_output=True, text=True)
+    if os.path.exists(path):
+        size = os.path.getsize(path)
+        print(f'Captured step {idx}: {path} ({size} bytes)')
+    else:
+        print(f'FAILED step {idx}: {result.stderr}', file=sys.stderr)
+"
+
+echo ""
+echo "Output directory: $OUTPUT_DIR"
+echo "Files: $(ls "$OUTPUT_DIR" | wc -l | tr -d ' ')"
