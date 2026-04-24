@@ -1,4 +1,4 @@
-# ALwith Design
+# ALwith Design - open-source replication of Claude Design
 
 > An open-source replication of Claude Design — deconstructed from Anthropic's website and rebuilt as a portable Claude Code plugin.
 
